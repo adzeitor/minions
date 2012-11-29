@@ -21,15 +21,17 @@ import Text.Printf
 data Task = Task
     { taskHost    :: String
     , taskCmd :: [String]
+    , taskColor :: Color
     } deriving Show
 
 data Result = Result
     { resHost    :: String
     , resPayload :: Either String String
     , resTime    :: NominalDiffTime
+    , resColor   :: Color
     } deriving Show
 
--- | time the given IO action (clock time) and return a tuple 
+-- | time the given IO action (clock time) and return a tuple
 --   of the execution time and the result
 timeIO :: IO a -> IO (NominalDiffTime, a)
 timeIO ioa = do
@@ -49,19 +51,20 @@ runTasks ts tmout handler = do
 
 runTask :: Task -> Int -> IO Result
 runTask Task{..} tmout = do
-    (time, res) <- timeIO . timeout tmout $ readProcessWithExitCode "ssh" args [] 
+    (time, res) <- timeIO . timeout tmout $ readProcessWithExitCode "ssh" args []
     case res of
       Nothing -> output time $ Left "timed out\n"
-      Just (code, stdout', stderr') -> 
+      Just (code, stdout', stderr') ->
         output time $ case code of
             ExitSuccess   -> Right stdout'
             ExitFailure _ -> Left stderr'
-  where args = "-T" : taskHost : taskCmd 
-        output time payload = return $ Result taskHost payload time
+  where args = "-T" : taskHost : taskCmd
+        output time payload = return $ Result taskHost payload time taskColor
 
 mkTasks :: [String] -> [String] -> [Task]
-mkTasks hosts cmd = map f hosts
-  where f h = Task h cmd
+mkTasks hosts cmd = map f $ zip hosts colors
+  where f (h,col) = Task h cmd col
+        colors = cycle [Black .. White]
 
 
 ----------------
@@ -76,11 +79,11 @@ putColorLn intensity color str = do
 
 printResult :: Result -> IO ()
 printResult Result{..} = do
-    putColorLn Dull Blue (resHost ++ t)
+    putColorLn Dull resColor (resHost ++ t)
     case resPayload of
       Left s  -> putColorLn Vivid Red s
       Right s -> putStrLn s
-    where t = printf " (%.1fs)" (realToFrac resTime :: Double) 
+    where t = printf " (%.1fs)" (realToFrac resTime :: Double)
 
 printShortResult :: Result -> IO ()
 printShortResult Result{..} =
@@ -107,8 +110,8 @@ options =
     [ Option [] ["help"]
       (NoArg (\opts -> opts { oHelp = True }))
       "display this help"
-    , Option "t" ["timeout"] 
-      (ReqArg (\f opts -> opts { oTimeout = (read f :: Int) * 1000000 }) 
+    , Option "t" ["timeout"]
+      (ReqArg (\f opts -> opts { oTimeout = (read f :: Int) * 1000000 })
         "SECONDS")
       "ssh timeout in SECONDS (default 10)"
     , Option "s" ["short"]
@@ -138,4 +141,4 @@ main = do
       else do
         let (file:cmd) = args
         hosts <- (filter ((not . null) . strip) . lines) `fmap` readFile file
-        runTasks (mkTasks hosts cmd) oTimeout oHandler 
+        runTasks (mkTasks hosts cmd) oTimeout oHandler
